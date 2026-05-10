@@ -1,9 +1,10 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertCircle,
   BarChart3,
+  BookOpenText,
   Bot,
   CheckCircle2,
-  FileText,
   GitMerge,
   Loader2,
   MessageSquareText,
@@ -11,7 +12,16 @@ import {
   UploadCloud,
 } from "lucide-react";
 
-type TextbookStatus = "uploaded" | "mock_parsed" | "failed";
+type TextbookStatus = "parsing" | "parsed" | "failed";
+
+type Chapter = {
+  chapter_id: string;
+  title: string;
+  page_start: number;
+  page_end: number;
+  content: string;
+  char_count: number;
+};
 
 type TextbookSummary = {
   textbook_id: string;
@@ -28,9 +38,17 @@ type TextbookSummary = {
   uploaded_at: string;
 };
 
+type TextbookDetail = TextbookSummary & {
+  chapters: Chapter[];
+};
+
+type UploadResponse = {
+  textbooks: TextbookSummary[];
+};
+
 type TabKey = "integration" | "rag" | "chat" | "report";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE_URL = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "/api");
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof GitMerge }> = [
   { key: "integration", label: "整合", icon: GitMerge },
@@ -45,13 +63,21 @@ function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("integration");
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [selectedTextbookId, setSelectedTextbookId] = useState<string | null>(null);
+  const [selectedTextbook, setSelectedTextbook] = useState<TextbookDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void refreshTextbooks();
+    void refreshTextbooks().then((items) => {
+      const firstParsed = items.find((item) => item.status === "parsed");
+      if (firstParsed) {
+        void selectTextbook(firstParsed.textbook_id);
+      }
+    });
   }, []);
 
-  const uploadedCount = textbooks.filter((item) => item.status !== "failed").length;
+  const uploadedCount = textbooks.filter((item) => item.status === "parsed").length;
   const failedCount = textbooks.filter((item) => item.status === "failed").length;
 
   const totalSize = useMemo(
@@ -61,13 +87,34 @@ function App() {
 
   async function refreshTextbooks() {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/textbooks`);
+      const response = await fetch(`${API_BASE_URL}/textbooks`);
       if (!response.ok) {
         throw new Error("教材列表读取失败");
       }
-      setTextbooks(await response.json());
+      const items: TextbookSummary[] = await response.json();
+      setTextbooks(items);
+      return items;
     } catch (err) {
       setError(err instanceof Error ? err.message : "无法连接后端服务");
+      return [];
+    }
+  }
+
+  async function selectTextbook(textbookId: string) {
+    setSelectedTextbookId(textbookId);
+    setIsDetailLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/textbooks/${textbookId}`);
+      if (!response.ok) {
+        throw new Error("教材详情读取失败");
+      }
+      setSelectedTextbook(await response.json());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "教材详情读取失败");
+      setSelectedTextbook(null);
+    } finally {
+      setIsDetailLoading(false);
     }
   }
 
@@ -84,14 +131,19 @@ function App() {
     fileArray.forEach((file) => formData.append("files", file));
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/textbooks/upload`, {
+      const response = await fetch(`${API_BASE_URL}/textbooks/upload`, {
         method: "POST",
         body: formData,
       });
       if (!response.ok) {
         throw new Error("上传接口返回异常");
       }
-      await refreshTextbooks();
+      const result: UploadResponse = await response.json();
+      const items = await refreshTextbooks();
+      const firstUploaded = result.textbooks[0] ?? items[0];
+      if (firstUploaded) {
+        await selectTextbook(firstUploaded.textbook_id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "上传失败");
     } finally {
@@ -148,7 +200,7 @@ function App() {
             onChange={handleFileChange}
           />
           <UploadCloud size={34} aria-hidden="true" />
-          <strong>{isUploading ? "上传中..." : "拖拽或点击上传"}</strong>
+          <strong>{isUploading ? "上传/解析中..." : "拖拽或点击上传"}</strong>
           <span>PDF / Markdown / TXT</span>
         </div>
 
@@ -178,7 +230,14 @@ function App() {
           {textbooks.length === 0 ? (
             <div className="empty-list">暂无教材</div>
           ) : (
-            textbooks.map((item) => <TextbookCard key={item.textbook_id} item={item} />)
+            textbooks.map((item) => (
+              <TextbookCard
+                key={item.textbook_id}
+                item={item}
+                isSelected={item.textbook_id === selectedTextbookId}
+                onSelect={() => void selectTextbook(item.textbook_id)}
+              />
+            ))
           )}
         </section>
       </aside>
@@ -186,24 +245,13 @@ function App() {
       <section className="graph-stage">
         <div className="stage-toolbar">
           <div>
-            <span className="eyebrow">Knowledge Graph</span>
-            <h2>知识图谱主视图</h2>
+            <span className="eyebrow">Parser</span>
+            <h2>{selectedTextbook ? selectedTextbook.title : "教材解析结果"}</h2>
           </div>
-          <div className="mock-badge">Stage 1 Mock</div>
+          <div className="mock-badge">Stage 2 Parser</div>
         </div>
 
-        <div className="graph-placeholder">
-          <div className="graph-grid" />
-          <div className="node node-a">教材</div>
-          <div className="node node-b">章节</div>
-          <div className="node node-c">知识点</div>
-          <div className="node node-d">引用</div>
-          <svg className="edges" viewBox="0 0 640 420" aria-hidden="true">
-            <path d="M170 180 C250 105 340 105 430 170" />
-            <path d="M170 180 C265 250 360 265 478 292" />
-            <path d="M430 170 C470 200 485 245 478 292" />
-          </svg>
-        </div>
+        <ParserStage textbook={selectedTextbook} isLoading={isDetailLoading || isUploading} />
       </section>
 
       <aside className="right-panel">
@@ -230,25 +278,123 @@ function App() {
   );
 }
 
-function TextbookCard({ item }: { item: TextbookSummary }) {
+function TextbookCard({
+  item,
+  isSelected,
+  onSelect,
+}: {
+  item: TextbookSummary;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
   const isFailed = item.status === "failed";
+  const isParsing = item.status === "parsing";
 
   return (
-    <article className={`textbook-card ${isFailed ? "failed" : ""}`}>
+    <button
+      className={`textbook-card ${isFailed ? "failed" : ""} ${isSelected ? "selected" : ""}`}
+      onClick={onSelect}
+      type="button"
+    >
       <div className="file-icon">
-        {isFailed ? <FileText size={18} aria-hidden="true" /> : <CheckCircle2 size={18} aria-hidden="true" />}
+        {isFailed ? <AlertCircle size={18} aria-hidden="true" /> : null}
+        {isParsing ? <Loader2 className="spin" size={18} aria-hidden="true" /> : null}
+        {!isFailed && !isParsing ? <CheckCircle2 size={18} aria-hidden="true" /> : null}
       </div>
       <div className="file-meta">
         <strong title={item.filename}>{item.filename}</strong>
         <span>
           {item.format} · {item.size_label}
         </span>
+        <span>
+          {item.total_pages > 0 ? `${item.total_pages} 页 · ` : ""}
+          {item.total_chars} 字 · {item.chapter_count} 章
+        </span>
         <small>{item.message}</small>
       </div>
-      <span className={`status-pill ${isFailed ? "failed" : "done"}`}>
-        {isFailed ? "失败" : "已解析"}
+      <span className={`status-pill ${isFailed ? "failed" : isParsing ? "parsing" : "done"}`}>
+        {statusLabel(item.status)}
       </span>
-    </article>
+    </button>
+  );
+}
+
+function ParserStage({
+  textbook,
+  isLoading,
+}: {
+  textbook: TextbookDetail | null;
+  isLoading: boolean;
+}) {
+  if (isLoading && !textbook) {
+    return (
+      <div className="parser-empty">
+        <Loader2 className="spin" size={28} aria-hidden="true" />
+        <strong>解析中</strong>
+        <span>正在读取文件并识别章节结构</span>
+      </div>
+    );
+  }
+
+  if (!textbook) {
+    return (
+      <div className="parser-empty">
+        <BookOpenText size={34} aria-hidden="true" />
+        <strong>等待上传教材</strong>
+        <span>上传 PDF、Markdown 或 TXT 后，这里会展示章节列表。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="parser-result">
+      <section className="detail-summary" aria-label="解析统计">
+        <div>
+          <span>解析状态</span>
+          <strong>{statusLabel(textbook.status)}</strong>
+        </div>
+        <div>
+          <span>总页数</span>
+          <strong>{textbook.total_pages || "-"}</strong>
+        </div>
+        <div>
+          <span>总字数</span>
+          <strong>{textbook.total_chars}</strong>
+        </div>
+        <div>
+          <span>章节数</span>
+          <strong>{textbook.chapter_count}</strong>
+        </div>
+      </section>
+
+      {textbook.status === "failed" ? (
+        <div className="error-banner">{textbook.message}</div>
+      ) : (
+        <section className="chapter-list" aria-label="章节列表">
+          {textbook.chapters.length === 0 ? (
+            <div className="empty-list">暂无章节</div>
+          ) : (
+            textbook.chapters.map((chapter) => (
+              <article className="chapter-card" key={chapter.chapter_id}>
+                <header>
+                  <div>
+                    <span>{chapter.chapter_id}</span>
+                    <h3>{chapter.title}</h3>
+                  </div>
+                  <strong>
+                    {chapter.page_start === chapter.page_end
+                      ? `第 ${chapter.page_start} 页`
+                      : `第 ${chapter.page_start}-${chapter.page_end} 页`}
+                  </strong>
+                </header>
+                <p>{chapter.content ? chapter.content.slice(0, 260) : "未提取到正文"}</p>
+                <footer>{chapter.char_count} 字</footer>
+              </article>
+            ))
+          )}
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -310,6 +456,16 @@ function PanelContent({
   );
 }
 
+function statusLabel(status: TextbookStatus) {
+  if (status === "parsing") {
+    return "解析中";
+  }
+  if (status === "failed") {
+    return "失败";
+  }
+  return "已完成";
+}
+
 function formatSize(sizeBytes: number) {
   if (sizeBytes <= 0) {
     return "0 B";
@@ -322,6 +478,10 @@ function formatSize(sizeBytes: number) {
     index += 1;
   }
   return index === 0 ? `${value} ${units[index]}` : `${value.toFixed(1)} ${units[index]}`;
+}
+
+function normalizeApiBase(baseUrl: string) {
+  return baseUrl.replace(/\/+$/, "");
 }
 
 export default App;

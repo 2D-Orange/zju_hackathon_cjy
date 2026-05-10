@@ -4,7 +4,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-TextbookStatus = Literal["uploaded", "mock_parsed", "failed"]
+TextbookStatus = Literal["parsing", "parsed", "failed"]
+
+
+class Chapter(BaseModel):
+    chapter_id: str
+    title: str
+    page_start: int
+    page_end: int
+    content: str
+    char_count: int
 
 
 class TextbookSummary(BaseModel):
@@ -20,6 +29,10 @@ class TextbookSummary(BaseModel):
     total_chars: int = 0
     chapter_count: int = 0
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TextbookDetail(TextbookSummary):
+    chapters: list[Chapter] = Field(default_factory=list)
 
 
 class UploadResponse(BaseModel):
