@@ -11,6 +11,7 @@ import {
   Network,
   UploadCloud,
 } from "lucide-react";
+import { KnowledgeGraph } from "./KnowledgeGraph";
 
 type TextbookStatus = "parsing" | "parsed" | "failed";
 
@@ -245,13 +246,13 @@ function App() {
       <section className="graph-stage">
         <div className="stage-toolbar">
           <div>
-            <span className="eyebrow">Parser</span>
-            <h2>{selectedTextbook ? selectedTextbook.title : "教材解析结果"}</h2>
+            <span className="eyebrow">Knowledge Graph</span>
+            <h2>{selectedTextbook ? selectedTextbook.title : "知识图谱"}</h2>
           </div>
-          <div className="mock-badge">Stage 2 Parser</div>
+          <div className="mock-badge">Stage 3</div>
         </div>
 
-        <ParserStage textbook={selectedTextbook} isLoading={isDetailLoading || isUploading} />
+        <KnowledgeGraph textbookId={selectedTextbookId} API_BASE_URL={API_BASE_URL} />
       </section>
 
       <aside className="right-panel">
