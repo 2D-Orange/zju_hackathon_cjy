@@ -802,6 +802,178 @@ textarea {
   cursor: not-allowed;
 }
 
+.rag-panel {
+  min-height: 0;
+}
+
+.rag-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.rag-status-grid div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.rag-status-grid span,
+.rag-status-grid strong {
+  display: block;
+}
+
+.rag-status-grid span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.rag-status-grid strong {
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rag-question-form {
+  display: grid;
+  gap: 10px;
+}
+
+.rag-question-form textarea {
+  min-height: 104px;
+  color: #172033;
+  background: #ffffff;
+}
+
+.rag-question-form textarea:disabled {
+  color: #98a2b3;
+  background: #f8fafc;
+}
+
+.rag-question-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 0;
+  color: #ffffff;
+  background: #0f766e;
+  cursor: pointer;
+}
+
+.rag-question-form button:disabled {
+  color: #98a2b3;
+  background: #e4e9f0;
+  cursor: not-allowed;
+}
+
+.rag-result {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.rag-answer,
+.rag-citations,
+.rag-source-chunk {
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.rag-answer {
+  padding: 12px;
+}
+
+.rag-answer span {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rag-answer p {
+  margin: 7px 0 0;
+  color: #172033;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.rag-citations {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.rag-citations div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.rag-citations strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rag-citations span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.rag-source-list {
+  display: grid;
+  gap: 8px;
+  max-height: 34vh;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.rag-source-chunk {
+  overflow: hidden;
+}
+
+.rag-source-chunk summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  color: #172033;
+  cursor: pointer;
+}
+
+.rag-source-chunk summary span {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rag-source-chunk summary strong {
+  color: #667085;
+  font-size: 12px;
+}
+
+.rag-source-chunk p {
+  max-height: 170px;
+  overflow: auto;
+  margin: 0;
+  padding: 0 10px 10px;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
 .integration-panel {
   min-height: 0;
 }

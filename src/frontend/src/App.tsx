@@ -1,10 +1,11 @@
-import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BarChart3,
   BookOpenText,
   Bot,
   CheckCircle2,
+  Database,
   GitBranch,
   GitMerge,
   Loader2,
@@ -12,6 +13,7 @@ import {
   MousePointerClick,
   Network,
   RefreshCw,
+  Send,
   UploadCloud,
 } from "lucide-react";
 import * as echarts from "echarts";
@@ -151,6 +153,41 @@ type IntegrationResponse = {
   generated_at: string;
 };
 
+type RagIndexStatus = {
+  indexed: boolean;
+  textbook_ids: string[];
+  chunk_count: number;
+  embedding_mode: "local" | "online";
+  updated_at: string | null;
+};
+
+type RagCitation = {
+  textbook: string;
+  chapter: string;
+  page: number;
+  page_start: number;
+  page_end: number;
+  relevance_score: number;
+};
+
+type RagSourceChunk = {
+  chunk_id: string;
+  textbook_id: string;
+  textbook: string;
+  chapter: string;
+  page_start: number;
+  page_end: number;
+  text: string;
+  relevance_score: number;
+};
+
+type RagQueryResponse = {
+  answer: string;
+  citations: RagCitation[];
+  source_chunks: RagSourceChunk[];
+  generated_at: string;
+};
+
 type TabKey = "integration" | "rag" | "chat" | "report";
 
 const API_BASE_URL = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "/api");
@@ -183,6 +220,11 @@ function App() {
   const [integration, setIntegration] = useState<IntegrationResponse | null>(null);
   const [isIntegrationLoading, setIsIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState<string | null>(null);
+  const [ragStatus, setRagStatus] = useState<RagIndexStatus | null>(null);
+  const [ragResponse, setRagResponse] = useState<RagQueryResponse | null>(null);
+  const [isRagIndexing, setIsRagIndexing] = useState(false);
+  const [isRagQuerying, setIsRagQuerying] = useState(false);
+  const [ragError, setRagError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -193,6 +235,7 @@ function App() {
       }
     });
     void refreshIntegrationDecisions();
+    void refreshRagStatus();
   }, []);
 
   const uploadedCount = textbooks.filter((item) => item.status === "parsed").length;
@@ -321,6 +364,72 @@ function App() {
       await refreshIntegrationDecisions();
     } catch (err) {
       setIntegrationError(err instanceof Error ? err.message : "决策修改失败");
+    }
+  }
+
+  async function refreshRagStatus() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/rag/status`);
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "RAG 索引状态读取失败"));
+      }
+      setRagStatus(await response.json());
+      setRagError(null);
+    } catch (err) {
+      setRagError(err instanceof Error ? err.message : "RAG 索引状态读取失败");
+    }
+  }
+
+  async function buildRagIndex() {
+    const textbookIds = textbooks
+      .filter((item) => item.status === "parsed")
+      .map((item) => item.textbook_id);
+    if (textbookIds.length === 0) {
+      setRagError("请先上传并解析教材");
+      return;
+    }
+
+    setIsRagIndexing(true);
+    setRagError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/rag/index`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ textbook_ids: textbookIds, chunk_size: 700, overlap: 80 }),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "RAG 索引建立失败"));
+      }
+      setRagStatus(await response.json());
+      setRagResponse(null);
+    } catch (err) {
+      setRagError(err instanceof Error ? err.message : "RAG 索引建立失败");
+    } finally {
+      setIsRagIndexing(false);
+    }
+  }
+
+  async function queryRag(question: string) {
+    if (!question.trim()) {
+      return;
+    }
+
+    setIsRagQuerying(true);
+    setRagError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/rag/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: question.trim(), top_k: 5 }),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "RAG 问答失败"));
+      }
+      setRagResponse(await response.json());
+    } catch (err) {
+      setRagError(err instanceof Error ? err.message : "RAG 问答失败");
+    } finally {
+      setIsRagQuerying(false);
     }
   }
 
@@ -494,8 +603,15 @@ function App() {
           integration={integration}
           isIntegrationLoading={isIntegrationLoading}
           integrationError={integrationError}
+          ragStatus={ragStatus}
+          ragResponse={ragResponse}
+          isRagIndexing={isRagIndexing}
+          isRagQuerying={isRagQuerying}
+          ragError={ragError}
           onRunIntegration={() => void runIntegration()}
           onPatchDecision={(decisionId, patch) => void patchIntegrationDecision(decisionId, patch)}
+          onBuildRagIndex={() => void buildRagIndex()}
+          onQueryRag={(question) => void queryRag(question)}
         />
       </aside>
     </main>
@@ -804,8 +920,15 @@ function PanelContent({
   integration,
   isIntegrationLoading,
   integrationError,
+  ragStatus,
+  ragResponse,
+  isRagIndexing,
+  isRagQuerying,
+  ragError,
   onRunIntegration,
   onPatchDecision,
+  onBuildRagIndex,
+  onQueryRag,
 }: {
   activeTab: TabKey;
   textbooks: TextbookSummary[];
@@ -813,15 +936,23 @@ function PanelContent({
   integration: IntegrationResponse | null;
   isIntegrationLoading: boolean;
   integrationError: string | null;
+  ragStatus: RagIndexStatus | null;
+  ragResponse: RagQueryResponse | null;
+  isRagIndexing: boolean;
+  isRagQuerying: boolean;
+  ragError: string | null;
   onRunIntegration: () => void;
   onPatchDecision: (decisionId: string, patch: { action: IntegrationAction }) => void;
+  onBuildRagIndex: () => void;
+  onQueryRag: (question: string) => void;
 }) {
   const validBooks = textbooks.filter((item) => item.status !== "failed");
+  const parsedBookCount = validBooks.filter((item) => item.status === "parsed").length;
 
   if (activeTab === "integration") {
     return (
       <IntegrationPanel
-        parsedBookCount={validBooks.filter((item) => item.status === "parsed").length}
+        parsedBookCount={parsedBookCount}
         currentNodeCount={graph?.stats.node_count ?? 0}
         integration={integration}
         isLoading={isIntegrationLoading}
@@ -834,14 +965,16 @@ function PanelContent({
 
   if (activeTab === "rag") {
     return (
-      <section className="panel-body">
-        <h2>RAG 问答</h2>
-        <div className="status-line">索引状态：未建立</div>
-        <textarea placeholder="输入医学教材问题" disabled />
-        <button type="button" disabled>
-          发送问题
-        </button>
-      </section>
+      <RagPanel
+        parsedBookCount={parsedBookCount}
+        status={ragStatus}
+        response={ragResponse}
+        isIndexing={isRagIndexing}
+        isQuerying={isRagQuerying}
+        error={ragError}
+        onBuildIndex={onBuildRagIndex}
+        onQuery={onQueryRag}
+      />
     );
   }
 
@@ -864,6 +997,116 @@ function PanelContent({
         <strong>{validBooks.length}</strong>
       </div>
       <div className="placeholder-block">报告统计将在系统完成解析后自动汇总。</div>
+    </section>
+  );
+}
+
+function RagPanel({
+  parsedBookCount,
+  status,
+  response,
+  isIndexing,
+  isQuerying,
+  error,
+  onBuildIndex,
+  onQuery,
+}: {
+  parsedBookCount: number;
+  status: RagIndexStatus | null;
+  response: RagQueryResponse | null;
+  isIndexing: boolean;
+  isQuerying: boolean;
+  error: string | null;
+  onBuildIndex: () => void;
+  onQuery: (question: string) => void;
+}) {
+  const [question, setQuestion] = useState("");
+  const indexed = status?.indexed ?? false;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onQuery(question);
+  }
+
+  return (
+    <section className="panel-body rag-panel">
+      <div className="panel-title-row">
+        <h2>RAG 问答</h2>
+        <button type="button" onClick={onBuildIndex} disabled={isIndexing || parsedBookCount === 0}>
+          {isIndexing ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <Database size={16} />}
+          建索引
+        </button>
+      </div>
+
+      {error ? <div className="error-banner">{error}</div> : null}
+
+      <div className="rag-status-grid">
+        <div>
+          <span>索引</span>
+          <strong>{indexed ? "已建立" : "未建立"}</strong>
+        </div>
+        <div>
+          <span>Chunk</span>
+          <strong>{status?.chunk_count ?? 0}</strong>
+        </div>
+        <div>
+          <span>教材</span>
+          <strong>{status?.textbook_ids.length ?? parsedBookCount}</strong>
+        </div>
+        <div>
+          <span>Embedding</span>
+          <strong>{status?.embedding_mode ?? "local"}</strong>
+        </div>
+      </div>
+
+      <form className="rag-question-form" onSubmit={handleSubmit}>
+        <textarea
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="输入教材内问题"
+          disabled={!indexed || isQuerying}
+        />
+        <button type="submit" disabled={!indexed || isQuerying || !question.trim()}>
+          {isQuerying ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <Send size={16} />}
+          提问
+        </button>
+      </form>
+
+      {response ? (
+        <div className="rag-result">
+          <article className="rag-answer">
+            <span>回答</span>
+            <p>{response.answer}</p>
+          </article>
+
+          {response.citations.length > 0 ? (
+            <section className="rag-citations" aria-label="引用">
+              {response.citations.map((citation, index) => (
+                <div key={`${citation.textbook}-${citation.chapter}-${citation.page}-${index}`}>
+                  <strong>{citationText(citation)}</strong>
+                  <span>{formatPercent(citation.relevance_score)}</span>
+                </div>
+              ))}
+            </section>
+          ) : null}
+
+          {response.source_chunks.length > 0 ? (
+            <section className="rag-source-list" aria-label="来源 chunk">
+              {response.source_chunks.map((chunk, index) => (
+                <details key={chunk.chunk_id} className="rag-source-chunk" open={index === 0}>
+                  <summary>
+                    <span>{sourceChunkTitle(chunk)}</span>
+                    <strong>{formatPercent(chunk.relevance_score)}</strong>
+                  </summary>
+                  <p>{chunk.text}</p>
+                </details>
+              ))}
+            </section>
+          ) : null}
+        </div>
+      ) : (
+        <div className="placeholder-block">等待提问。</div>
+      )}
     </section>
   );
 }
@@ -1147,6 +1390,16 @@ function summarizeIntegrationStats(
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
+}
+
+function citationText(citation: RagCitation) {
+  return `[${citation.textbook}, ${citation.chapter}, 第 ${citation.page} 页]`;
+}
+
+function sourceChunkTitle(chunk: RagSourceChunk) {
+  const pageLabel =
+    chunk.page_start === chunk.page_end ? `第 ${chunk.page_start} 页` : `第 ${chunk.page_start}-${chunk.page_end} 页`;
+  return `${chunk.textbook} · ${chunk.chapter} · ${pageLabel}`;
 }
 
 function colorByFrequency(baseColor: string, frequency: number, maxFrequency: number) {

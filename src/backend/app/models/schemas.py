@@ -9,6 +9,7 @@ GraphRelationType = Literal["prerequisite", "parallel", "contains", "applies_to"
 GraphBuildMode = Literal["auto", "llm", "mock"]
 IntegrationAction = Literal["merge", "keep", "remove"]
 ConceptRelationType = Literal["same_concept", "broader_narrower", "related"]
+RagEmbeddingMode = Literal["local", "online"]
 
 
 class Chapter(BaseModel):
@@ -155,6 +156,64 @@ class IntegrationDecisionPatch(BaseModel):
     action: IntegrationAction | None = None
     reason: str | None = Field(default=None, min_length=1, max_length=500)
     confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class RagChunk(BaseModel):
+    chunk_id: str
+    textbook_id: str
+    textbook: str
+    chapter: str
+    page_start: int
+    page_end: int
+    text: str
+    char_count: int
+
+
+class RagIndexRequest(BaseModel):
+    textbook_ids: list[str] | None = None
+    chunk_size: int = Field(default=700, ge=500, le=800)
+    overlap: int = Field(default=80, ge=50, le=100)
+
+
+class RagIndexStatus(BaseModel):
+    indexed: bool
+    textbook_ids: list[str] = Field(default_factory=list)
+    chunk_count: int = 0
+    embedding_mode: RagEmbeddingMode = "local"
+    updated_at: datetime | None = None
+
+
+class RagQueryRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    top_k: int = Field(default=5, ge=1, le=5)
+    min_score: float = Field(default=0.12, ge=0, le=1)
+
+
+class RagCitation(BaseModel):
+    textbook: str
+    chapter: str
+    page: int
+    page_start: int
+    page_end: int
+    relevance_score: float = Field(ge=0, le=1)
+
+
+class RagSourceChunk(BaseModel):
+    chunk_id: str
+    textbook_id: str
+    textbook: str
+    chapter: str
+    page_start: int
+    page_end: int
+    text: str
+    relevance_score: float = Field(ge=0, le=1)
+
+
+class RagQueryResponse(BaseModel):
+    answer: str
+    citations: list[RagCitation] = Field(default_factory=list)
+    source_chunks: list[RagSourceChunk] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class UploadResponse(BaseModel):
