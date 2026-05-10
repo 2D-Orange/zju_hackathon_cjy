@@ -25,6 +25,9 @@ HOST=0.0.0.0 PORT=8000 .venv/bin/python src/backend/run.py
 - `GET /api/textbooks/{textbook_id}`
 - `POST /api/graph/build`
 - `GET /api/graph/{textbook_id}`
+- `POST /api/integration/run`
+- `GET /api/integration/decisions`
+- `PATCH /api/integration/decisions/{decision_id}`
 
 前端：
 
@@ -51,6 +54,7 @@ npm run dev
 - 前端默认 `VITE_API_BASE_URL=/api`，不要在代码中硬编码本机地址。
 - 如果前后端分离部署，建议在前端平台配置 rewrite/proxy，把 `/api/*` 转发到后端服务。
 - 知识图谱默认使用规则 mock fallback，完全基于解析后的章节原文提取。可选 LLM 模式通过 `GRAPH_EXTRACTOR_MODE=llm`、`GRAPH_LLM_BASE_URL`、`GRAPH_LLM_API_KEY`、`GRAPH_LLM_MODEL` 配置；LLM 返回内容仍会校验 `source_text` 是否来自章节原文。
+- 跨教材整合默认使用本地轻量 embedding fallback。可选在线 embedding 通过 `INTEGRATION_EMBEDDING_BASE_URL`、`INTEGRATION_EMBEDDING_API_KEY`、`INTEGRATION_EMBEDDING_MODEL` 配置；不配置时不依赖外网。
 
 ## 开发文档
 

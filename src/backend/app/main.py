@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.graph import router as graph_router
 from app.api.health import router as health_router
+from app.api.integration import router as integration_router
 from app.api.textbooks import router as textbooks_router
 
 
@@ -33,6 +34,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(textbooks_router)
 app.include_router(graph_router)
+app.include_router(integration_router)
 
 
 @app.exception_handler(HTTPException)

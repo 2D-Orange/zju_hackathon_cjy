@@ -29,11 +29,11 @@
 
 ## 阶段 4：跨教材整合
 
-- [ ] 为知识点生成 embedding 候选召回。
-- [ ] 基于阈值或 LLM 复核生成 `merge`、`keep`、`remove` 决策。
-- [ ] 输出 reason、confidence、affected_nodes、result_node。
-- [ ] 展示原始字数、整合后字数和压缩比。
-- [ ] 确保整合后内容不超过原始总字数 30%。
+- [x] 为知识点生成 embedding 候选召回。
+- [x] 基于阈值或 LLM 复核生成 `merge`、`keep`、`remove` 决策。
+- [x] 输出 reason、confidence、affected_nodes、result_node。
+- [x] 展示原始字数、整合后字数和压缩比。
+- [x] 确保整合后内容不超过原始总字数 30%。
 
 ## 阶段 5：RAG 问答
 

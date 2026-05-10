@@ -103,6 +103,54 @@ type GraphResponse = {
   generated_at: string;
 };
 
+type IntegrationAction = "merge" | "keep" | "remove";
+type ConceptRelationType = "same_concept" | "broader_narrower" | "related";
+
+type IntegratedKnowledgeNode = {
+  id: string;
+  name: string;
+  definition: string;
+  category: string;
+  source_nodes: string[];
+  textbook_titles: string[];
+  chapters: string[];
+  pages: number[];
+  source_text: string;
+  char_count: number;
+};
+
+type IntegrationDecision = {
+  decision_id: string;
+  action: IntegrationAction;
+  concept_relation: ConceptRelationType;
+  reason: string;
+  confidence: number;
+  affected_nodes: string[];
+  result_node: IntegratedKnowledgeNode;
+  original_chars: number;
+  compressed_chars: number;
+  editable: boolean;
+  manually_edited: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type IntegrationResponse = {
+  textbook_ids: string[];
+  decisions: IntegrationDecision[];
+  stats: {
+    textbook_count: number;
+    decision_count: number;
+    merge_count: number;
+    keep_count: number;
+    remove_count: number;
+    original_chars: number;
+    compressed_chars: number;
+    compression_ratio: number;
+  };
+  generated_at: string;
+};
+
 type TabKey = "integration" | "rag" | "chat" | "report";
 
 const API_BASE_URL = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "/api");
@@ -132,6 +180,9 @@ function App() {
   const [selectedTextbook, setSelectedTextbook] = useState<TextbookDetail | null>(null);
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const [selectedNode, setSelectedNode] = useState<KnowledgeNode | null>(null);
+  const [integration, setIntegration] = useState<IntegrationResponse | null>(null);
+  const [isIntegrationLoading, setIsIntegrationLoading] = useState(false);
+  const [integrationError, setIntegrationError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -141,6 +192,7 @@ function App() {
         void selectTextbook(firstParsed.textbook_id);
       }
     });
+    void refreshIntegrationDecisions();
   }, []);
 
   const uploadedCount = textbooks.filter((item) => item.status === "parsed").length;
@@ -196,6 +248,79 @@ function App() {
       setSelectedTextbook(null);
     } finally {
       setIsDetailLoading(false);
+    }
+  }
+
+  async function refreshIntegrationDecisions() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/integration/decisions`);
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "整合决策读取失败"));
+      }
+      const result: IntegrationResponse = await response.json();
+      setIntegration(result.decisions.length > 0 ? result : null);
+      setIntegrationError(null);
+    } catch (err) {
+      setIntegrationError(err instanceof Error ? err.message : "整合决策读取失败");
+    }
+  }
+
+  async function runIntegration() {
+    const textbookIds = textbooks
+      .filter((item) => item.status === "parsed")
+      .map((item) => item.textbook_id);
+    if (textbookIds.length < 2) {
+      setIntegrationError("跨教材整合至少需要两本已解析教材");
+      return;
+    }
+
+    setIsIntegrationLoading(true);
+    setIntegrationError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/integration/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ textbook_ids: textbookIds }),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "整合运行失败"));
+      }
+      setIntegration(await response.json());
+    } catch (err) {
+      setIntegrationError(err instanceof Error ? err.message : "整合运行失败");
+    } finally {
+      setIsIntegrationLoading(false);
+    }
+  }
+
+  async function patchIntegrationDecision(decisionId: string, patch: { action: IntegrationAction }) {
+    setIntegrationError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/integration/decisions/${decisionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "决策修改失败"));
+      }
+      const updatedDecision: IntegrationDecision = await response.json();
+      setIntegration((current) => {
+        if (!current) {
+          return current;
+        }
+        const decisions = current.decisions.map((decision) =>
+          decision.decision_id === decisionId ? updatedDecision : decision,
+        );
+        return {
+          ...current,
+          decisions,
+          stats: summarizeIntegrationStats(current.stats, decisions),
+        };
+      });
+      await refreshIntegrationDecisions();
+    } catch (err) {
+      setIntegrationError(err instanceof Error ? err.message : "决策修改失败");
     }
   }
 
@@ -362,7 +487,16 @@ function App() {
         </nav>
 
         <NodeDetail node={selectedNode} graph={graph} />
-        <PanelContent activeTab={activeTab} textbooks={textbooks} graph={graph} />
+        <PanelContent
+          activeTab={activeTab}
+          textbooks={textbooks}
+          graph={graph}
+          integration={integration}
+          isIntegrationLoading={isIntegrationLoading}
+          integrationError={integrationError}
+          onRunIntegration={() => void runIntegration()}
+          onPatchDecision={(decisionId, patch) => void patchIntegrationDecision(decisionId, patch)}
+        />
       </aside>
     </main>
   );
@@ -667,27 +801,34 @@ function PanelContent({
   activeTab,
   textbooks,
   graph,
+  integration,
+  isIntegrationLoading,
+  integrationError,
+  onRunIntegration,
+  onPatchDecision,
 }: {
   activeTab: TabKey;
   textbooks: TextbookSummary[];
   graph: GraphResponse | null;
+  integration: IntegrationResponse | null;
+  isIntegrationLoading: boolean;
+  integrationError: string | null;
+  onRunIntegration: () => void;
+  onPatchDecision: (decisionId: string, patch: { action: IntegrationAction }) => void;
 }) {
   const validBooks = textbooks.filter((item) => item.status !== "failed");
 
   if (activeTab === "integration") {
     return (
-      <section className="panel-body">
-        <h2>跨教材整合</h2>
-        <div className="metric-row">
-          <span>当前图谱节点</span>
-          <strong>{graph?.stats.node_count ?? 0}</strong>
-        </div>
-        <div className="metric-row">
-          <span>关系类型</span>
-          <strong>{graph?.stats.relation_types.length ?? 0}</strong>
-        </div>
-        <div className="placeholder-block">整合决策列表将在下一阶段接入。</div>
-      </section>
+      <IntegrationPanel
+        parsedBookCount={validBooks.filter((item) => item.status === "parsed").length}
+        currentNodeCount={graph?.stats.node_count ?? 0}
+        integration={integration}
+        isLoading={isIntegrationLoading}
+        error={integrationError}
+        onRun={onRunIntegration}
+        onPatchDecision={onPatchDecision}
+      />
     );
   }
 
@@ -723,6 +864,128 @@ function PanelContent({
         <strong>{validBooks.length}</strong>
       </div>
       <div className="placeholder-block">报告统计将在系统完成解析后自动汇总。</div>
+    </section>
+  );
+}
+
+function IntegrationPanel({
+  parsedBookCount,
+  currentNodeCount,
+  integration,
+  isLoading,
+  error,
+  onRun,
+  onPatchDecision,
+}: {
+  parsedBookCount: number;
+  currentNodeCount: number;
+  integration: IntegrationResponse | null;
+  isLoading: boolean;
+  error: string | null;
+  onRun: () => void;
+  onPatchDecision: (decisionId: string, patch: { action: IntegrationAction }) => void;
+}) {
+  const stats = integration?.stats;
+
+  return (
+    <section className="panel-body integration-panel">
+      <div className="panel-title-row">
+        <h2>跨教材整合</h2>
+        <button type="button" onClick={onRun} disabled={isLoading || parsedBookCount < 2}>
+          {isLoading ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <GitMerge size={16} />}
+          运行
+        </button>
+      </div>
+
+      {error ? <div className="error-banner">{error}</div> : null}
+
+      <div className="integration-metrics">
+        <div>
+          <span>教材</span>
+          <strong>{stats?.textbook_count ?? parsedBookCount}</strong>
+        </div>
+        <div>
+          <span>节点</span>
+          <strong>{currentNodeCount}</strong>
+        </div>
+        <div>
+          <span>决策</span>
+          <strong>{stats?.decision_count ?? 0}</strong>
+        </div>
+        <div>
+          <span>压缩比</span>
+          <strong>{stats ? formatPercent(stats.compression_ratio) : "-"}</strong>
+        </div>
+      </div>
+
+      {stats ? (
+        <div className="compression-bar" aria-label="压缩比">
+          <span style={{ width: `${Math.min(100, stats.compression_ratio * 100)}%` }} />
+          <strong>
+            {stats.compressed_chars} / {stats.original_chars} 字
+          </strong>
+        </div>
+      ) : null}
+
+      <div className="decision-counts">
+        <span>Merge {stats?.merge_count ?? 0}</span>
+        <span>Keep {stats?.keep_count ?? 0}</span>
+        <span>Remove {stats?.remove_count ?? 0}</span>
+      </div>
+
+      {!integration || integration.decisions.length === 0 ? (
+        <div className="placeholder-block">暂无整合决策。</div>
+      ) : (
+        <div className="decision-list">
+          {integration.decisions.map((decision) => (
+            <article className="decision-card" key={decision.decision_id}>
+              <header>
+                <div>
+                  <span className={`action-pill ${decision.action}`}>{actionLabel(decision.action)}</span>
+                  <strong>{decision.result_node.name}</strong>
+                </div>
+                <select
+                  value={decision.action}
+                  disabled={!decision.editable}
+                  onChange={(event) =>
+                    onPatchDecision(decision.decision_id, {
+                      action: event.target.value as IntegrationAction,
+                    })
+                  }
+                  aria-label="修改整合决策"
+                >
+                  <option value="merge">merge</option>
+                  <option value="keep">keep</option>
+                  <option value="remove">remove</option>
+                </select>
+              </header>
+              <div className="confidence-row">
+                <span>{conceptRelationLabel(decision.concept_relation)}</span>
+                <strong>{formatPercent(decision.confidence)}</strong>
+              </div>
+              <p>{decision.reason}</p>
+              <dl>
+                <div>
+                  <dt>影响节点</dt>
+                  <dd>{decision.affected_nodes.length}</dd>
+                </div>
+                <div>
+                  <dt>来源</dt>
+                  <dd>{decision.result_node.textbook_titles.join(" / ")}</dd>
+                </div>
+                <div>
+                  <dt>章节</dt>
+                  <dd>{decision.result_node.chapters.slice(0, 2).join(" / ")}</dd>
+                </div>
+              </dl>
+              {decision.result_node.source_text ? (
+                <blockquote>{decision.result_node.source_text}</blockquote>
+              ) : null}
+              {decision.manually_edited ? <footer>已人工修改</footer> : null}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -847,6 +1110,43 @@ function relationLabel(relation: GraphRelationType) {
     return "包含";
   }
   return "应用于";
+}
+
+function actionLabel(action: IntegrationAction) {
+  if (action === "merge") {
+    return "合并";
+  }
+  if (action === "remove") {
+    return "移除";
+  }
+  return "保留";
+}
+
+function conceptRelationLabel(relation: ConceptRelationType) {
+  if (relation === "same_concept") {
+    return "同一概念";
+  }
+  if (relation === "broader_narrower") {
+    return "上下位概念";
+  }
+  return "相关但不等价";
+}
+
+function summarizeIntegrationStats(
+  currentStats: IntegrationResponse["stats"],
+  decisions: IntegrationDecision[],
+): IntegrationResponse["stats"] {
+  return {
+    ...currentStats,
+    decision_count: decisions.length,
+    merge_count: decisions.filter((decision) => decision.action === "merge").length,
+    keep_count: decisions.filter((decision) => decision.action === "keep").length,
+    remove_count: decisions.filter((decision) => decision.action === "remove").length,
+  };
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(value * 100)}%`;
 }
 
 function colorByFrequency(baseColor: string, frequency: number, maxFrequency: number) {
