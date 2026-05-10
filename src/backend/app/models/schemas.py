@@ -10,6 +10,8 @@ GraphBuildMode = Literal["auto", "llm", "mock"]
 IntegrationAction = Literal["merge", "keep", "remove"]
 ConceptRelationType = Literal["same_concept", "broader_narrower", "related"]
 RagEmbeddingMode = Literal["local", "online"]
+ChatRole = Literal["teacher", "assistant"]
+TeacherFeedbackIntent = Literal["explain", "modify", "clarify"]
 
 
 class Chapter(BaseModel):
@@ -214,6 +216,29 @@ class RagQueryResponse(BaseModel):
     citations: list[RagCitation] = Field(default_factory=list)
     source_chunks: list[RagSourceChunk] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatMessage(BaseModel):
+    message_id: str
+    role: ChatRole
+    content: str
+    decision_id: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TeacherFeedbackRequest(BaseModel):
+    session_id: str | None = None
+    message: str = Field(min_length=1, max_length=800)
+    decision_id: str | None = None
+    history: list[ChatMessage] = Field(default_factory=list)
+
+
+class TeacherFeedbackResponse(BaseModel):
+    session_id: str
+    intent: TeacherFeedbackIntent
+    answer: str
+    history: list[ChatMessage]
+    updated_decision: IntegrationDecision | None = None
 
 
 class UploadResponse(BaseModel):

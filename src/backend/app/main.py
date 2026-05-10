@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
+from app.api.chat import router as chat_router
 from app.api.graph import router as graph_router
 from app.api.health import router as health_router
 from app.api.integration import router as integration_router
@@ -37,6 +38,7 @@ app.include_router(textbooks_router)
 app.include_router(graph_router)
 app.include_router(integration_router)
 app.include_router(rag_router)
+app.include_router(chat_router)
 
 
 @app.exception_handler(HTTPException)

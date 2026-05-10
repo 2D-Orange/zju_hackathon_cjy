@@ -188,6 +188,22 @@ type RagQueryResponse = {
   generated_at: string;
 };
 
+type ChatMessage = {
+  message_id: string;
+  role: "teacher" | "assistant";
+  content: string;
+  decision_id: string | null;
+  created_at: string;
+};
+
+type TeacherFeedbackResponse = {
+  session_id: string;
+  intent: "explain" | "modify" | "clarify";
+  answer: string;
+  history: ChatMessage[];
+  updated_decision: IntegrationDecision | null;
+};
+
 type TabKey = "integration" | "rag" | "chat" | "report";
 
 const API_BASE_URL = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "/api");
@@ -225,6 +241,10 @@ function App() {
   const [isRagIndexing, setIsRagIndexing] = useState(false);
   const [isRagQuerying, setIsRagQuerying] = useState(false);
   const [ragError, setRagError] = useState<string | null>(null);
+  const [chatSessionId, setChatSessionId] = useState(() => getStoredChatSessionId());
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>(() => getStoredChatHistory());
+  const [isChatSending, setIsChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -433,6 +453,56 @@ function App() {
     }
   }
 
+  async function sendTeacherFeedback(message: string, decisionId: string | null) {
+    if (!message.trim()) {
+      return;
+    }
+
+    setIsChatSending(true);
+    setChatError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: chatSessionId,
+          message: message.trim(),
+          decision_id: decisionId,
+          history: chatHistory,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "教师反馈处理失败"));
+      }
+      const result: TeacherFeedbackResponse = await response.json();
+      setChatSessionId(result.session_id);
+      storeChatSessionId(result.session_id);
+      setChatHistory(result.history);
+      storeChatHistory(result.history);
+      if (result.updated_decision) {
+        const updatedDecision = result.updated_decision;
+        setIntegration((current) => {
+          if (!current) {
+            return current;
+          }
+          const decisions = current.decisions.map((decision) =>
+            decision.decision_id === updatedDecision.decision_id ? updatedDecision : decision,
+          );
+          return {
+            ...current,
+            decisions,
+            stats: summarizeIntegrationStats(current.stats, decisions),
+          };
+        });
+        await refreshIntegrationDecisions();
+      }
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "教师反馈处理失败");
+    } finally {
+      setIsChatSending(false);
+    }
+  }
+
   async function uploadFiles(files: FileList | File[]) {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) {
@@ -608,10 +678,14 @@ function App() {
           isRagIndexing={isRagIndexing}
           isRagQuerying={isRagQuerying}
           ragError={ragError}
+          chatHistory={chatHistory}
+          isChatSending={isChatSending}
+          chatError={chatError}
           onRunIntegration={() => void runIntegration()}
           onPatchDecision={(decisionId, patch) => void patchIntegrationDecision(decisionId, patch)}
           onBuildRagIndex={() => void buildRagIndex()}
           onQueryRag={(question) => void queryRag(question)}
+          onSendTeacherFeedback={(message, decisionId) => void sendTeacherFeedback(message, decisionId)}
         />
       </aside>
     </main>
@@ -925,10 +999,14 @@ function PanelContent({
   isRagIndexing,
   isRagQuerying,
   ragError,
+  chatHistory,
+  isChatSending,
+  chatError,
   onRunIntegration,
   onPatchDecision,
   onBuildRagIndex,
   onQueryRag,
+  onSendTeacherFeedback,
 }: {
   activeTab: TabKey;
   textbooks: TextbookSummary[];
@@ -941,10 +1019,14 @@ function PanelContent({
   isRagIndexing: boolean;
   isRagQuerying: boolean;
   ragError: string | null;
+  chatHistory: ChatMessage[];
+  isChatSending: boolean;
+  chatError: string | null;
   onRunIntegration: () => void;
   onPatchDecision: (decisionId: string, patch: { action: IntegrationAction }) => void;
   onBuildRagIndex: () => void;
   onQueryRag: (question: string) => void;
+  onSendTeacherFeedback: (message: string, decisionId: string | null) => void;
 }) {
   const validBooks = textbooks.filter((item) => item.status !== "failed");
   const parsedBookCount = validBooks.filter((item) => item.status === "parsed").length;
@@ -980,12 +1062,13 @@ function PanelContent({
 
   if (activeTab === "chat") {
     return (
-      <section className="panel-body">
-        <h2>教师对话</h2>
-        <div className="chat-shell">
-          <div className="chat-message">等待整合决策生成后开启反馈。</div>
-        </div>
-      </section>
+      <TeacherChatPanel
+        integration={integration}
+        history={chatHistory}
+        isSending={isChatSending}
+        error={chatError}
+        onSend={onSendTeacherFeedback}
+      />
     );
   }
 
@@ -997,6 +1080,92 @@ function PanelContent({
         <strong>{validBooks.length}</strong>
       </div>
       <div className="placeholder-block">报告统计将在系统完成解析后自动汇总。</div>
+    </section>
+  );
+}
+
+function TeacherChatPanel({
+  integration,
+  history,
+  isSending,
+  error,
+  onSend,
+}: {
+  integration: IntegrationResponse | null;
+  history: ChatMessage[];
+  isSending: boolean;
+  error: string | null;
+  onSend: (message: string, decisionId: string | null) => void;
+}) {
+  const [message, setMessage] = useState("");
+  const [decisionId, setDecisionId] = useState<string>("");
+  const decisions = integration?.decisions ?? [];
+
+  useEffect(() => {
+    if (!decisionId && decisions[0]) {
+      setDecisionId(decisions[0].decision_id);
+    }
+    if (decisionId && !decisions.some((decision) => decision.decision_id === decisionId)) {
+      setDecisionId(decisions[0]?.decision_id ?? "");
+    }
+  }, [decisionId, decisions]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSend(message, decisionId || null);
+    setMessage("");
+  }
+
+  return (
+    <section className="panel-body teacher-chat-panel">
+      <h2>教师对话</h2>
+
+      {error ? <div className="error-banner">{error}</div> : null}
+
+      <label className="chat-decision-picker">
+        <span>关联决策</span>
+        <select
+          value={decisionId}
+          onChange={(event) => setDecisionId(event.target.value)}
+          disabled={decisions.length === 0}
+        >
+          {decisions.length === 0 ? (
+            <option value="">暂无整合决策</option>
+          ) : (
+            decisions.map((decision) => (
+              <option key={decision.decision_id} value={decision.decision_id}>
+                {actionLabel(decision.action)} · {decision.result_node.name}
+              </option>
+            ))
+          )}
+        </select>
+      </label>
+
+      <div className="chat-shell">
+        {history.length === 0 ? (
+          <div className="chat-message empty">等待教师反馈。</div>
+        ) : (
+          history.map((item) => (
+            <article className={`chat-message ${item.role}`} key={item.message_id}>
+              <strong>{item.role === "teacher" ? "教师" : "系统"}</strong>
+              <p>{item.content}</p>
+            </article>
+          ))
+        )}
+      </div>
+
+      <form className="teacher-chat-form" onSubmit={handleSubmit}>
+        <textarea
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          placeholder="询问整合原因，或输入“把这个合并改为保留”"
+          disabled={isSending || decisions.length === 0}
+        />
+        <button type="submit" disabled={isSending || decisions.length === 0 || !message.trim()}>
+          {isSending ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <Send size={16} />}
+          发送反馈
+        </button>
+      </form>
     </section>
   );
 }
@@ -1451,6 +1620,56 @@ async function readApiError(response: Response, fallback: string) {
     return fallback;
   }
   return fallback;
+}
+
+const CHAT_SESSION_STORAGE_KEY = "medical_knowledge_chat_session_id";
+const CHAT_HISTORY_STORAGE_KEY = "medical_knowledge_chat_history";
+
+function getStoredChatSessionId() {
+  const stored = window.localStorage.getItem(CHAT_SESSION_STORAGE_KEY);
+  if (stored) {
+    return stored;
+  }
+  const sessionId = `session_${window.crypto?.randomUUID?.().replace(/-/g, "").slice(0, 12) ?? Date.now()}`;
+  storeChatSessionId(sessionId);
+  return sessionId;
+}
+
+function storeChatSessionId(sessionId: string) {
+  window.localStorage.setItem(CHAT_SESSION_STORAGE_KEY, sessionId);
+}
+
+function getStoredChatHistory(): ChatMessage[] {
+  const raw = window.localStorage.getItem(CHAT_HISTORY_STORAGE_KEY);
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter(isChatMessage);
+  } catch {
+    return [];
+  }
+}
+
+function storeChatHistory(history: ChatMessage[]) {
+  window.localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(history));
+}
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const item = value as Partial<ChatMessage>;
+  return (
+    typeof item.message_id === "string" &&
+    (item.role === "teacher" || item.role === "assistant") &&
+    typeof item.content === "string" &&
+    typeof item.created_at === "string"
+  );
 }
 
 function statusLabel(status: TextbookStatus) {

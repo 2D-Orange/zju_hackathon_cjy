@@ -1183,12 +1183,107 @@ textarea {
   font-size: 12px;
 }
 
+.teacher-chat-panel {
+  min-height: 0;
+}
+
+.chat-decision-picker {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.chat-decision-picker span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.chat-decision-picker select {
+  width: 100%;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #172033;
+  background: #ffffff;
+}
+
 .chat-shell {
+  display: grid;
+  gap: 10px;
+  max-height: 34vh;
   min-height: 220px;
+  overflow: auto;
+  padding-right: 3px;
 }
 
 .chat-message {
-  padding: 14px;
+  padding: 12px;
+}
+
+.chat-message.teacher {
+  border-color: #bfdbfe;
+  color: #1e3a8a;
+  background: #eff6ff;
+}
+
+.chat-message.assistant {
+  border-color: #bfe7dc;
+  color: #25514c;
+  background: #f0fdfa;
+}
+
+.chat-message.empty {
+  color: #667085;
+  background: #ffffff;
+}
+
+.chat-message strong {
+  display: block;
+  margin-bottom: 6px;
+  color: inherit;
+  font-size: 12px;
+}
+
+.chat-message p {
+  margin: 0;
+  color: #172033;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.teacher-chat-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.teacher-chat-form textarea {
+  min-height: 96px;
+  color: #172033;
+  background: #ffffff;
+}
+
+.teacher-chat-form textarea:disabled {
+  color: #98a2b3;
+  background: #f8fafc;
+}
+
+.teacher-chat-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 0;
+  color: #ffffff;
+  background: #0f766e;
+  cursor: pointer;
+}
+
+.teacher-chat-form button:disabled {
+  color: #98a2b3;
+  background: #e4e9f0;
+  cursor: not-allowed;
 }
 
 .spin {

@@ -31,6 +31,7 @@ HOST=0.0.0.0 PORT=8000 .venv/bin/python src/backend/run.py
 - `POST /api/rag/index`
 - `POST /api/rag/query`
 - `GET /api/rag/status`
+- `POST /api/chat`
 
 前端：
 
@@ -59,6 +60,7 @@ npm run dev
 - 知识图谱默认使用规则 mock fallback，完全基于解析后的章节原文提取。可选 LLM 模式通过 `GRAPH_EXTRACTOR_MODE=llm`、`GRAPH_LLM_BASE_URL`、`GRAPH_LLM_API_KEY`、`GRAPH_LLM_MODEL` 配置；LLM 返回内容仍会校验 `source_text` 是否来自章节原文。
 - 跨教材整合默认使用本地轻量 embedding fallback。可选在线 embedding 通过 `INTEGRATION_EMBEDDING_BASE_URL`、`INTEGRATION_EMBEDDING_API_KEY`、`INTEGRATION_EMBEDDING_MODEL` 配置；不配置时不依赖外网。
 - RAG 默认使用内存向量索引和本地轻量 embedding fallback，chunk 为 700 字、80 字重叠。可选在线 embedding 通过 `RAG_EMBEDDING_BASE_URL`、`RAG_EMBEDDING_API_KEY`、`RAG_EMBEDDING_MODEL` 配置；可选 OpenAI 兼容问答模型通过 `RAG_LLM_BASE_URL`、`RAG_LLM_API_KEY`、`RAG_LLM_MODEL` 配置。未配置 LLM 时返回基于检索 chunk 的摘录式答案，不使用模型医学常识补全。
+- 教师反馈默认使用规则解析 fallback，可解释整合决策 reason、definition、source_text 和教材出处，也可将决策自然语言调整为合并、保留或移除。整合决策与对话会话写入 `data/processed/` 下的本地 JSON store，该目录不会提交到 GitHub。
 
 ## 开发文档
 
