@@ -230,7 +230,12 @@ def extract_with_llm(
     except json.JSONDecodeError:
         return []
 
-    items = parsed.get("nodes", parsed if isinstance(parsed, list) else [])
+    if isinstance(parsed, list):
+        items = parsed
+    elif isinstance(parsed, dict):
+        items = parsed.get("nodes", [])
+    else:
+        items = []
     if not isinstance(items, list):
         return []
 
