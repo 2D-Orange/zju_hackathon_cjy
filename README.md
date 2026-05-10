@@ -1,2 +1,0 @@
-# zju_hackathon_cjy
-本人在浙大AI全栈极速黑客松比赛的工作空间
