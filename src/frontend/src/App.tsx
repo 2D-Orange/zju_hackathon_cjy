@@ -1,16 +1,20 @@
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BarChart3,
   BookOpenText,
   Bot,
   CheckCircle2,
+  GitBranch,
   GitMerge,
   Loader2,
   MessageSquareText,
+  MousePointerClick,
   Network,
+  RefreshCw,
   UploadCloud,
 } from "lucide-react";
+import * as echarts from "echarts";
 
 type TextbookStatus = "parsing" | "parsed" | "failed";
 
@@ -46,9 +50,69 @@ type UploadResponse = {
   textbooks: TextbookSummary[];
 };
 
+type GraphRelationType = "prerequisite" | "parallel" | "contains" | "applies_to";
+
+type KnowledgeOccurrence = {
+  chapter_id: string;
+  chapter: string;
+  page: number;
+  source_text: string;
+};
+
+type KnowledgeNode = {
+  id: string;
+  name: string;
+  definition: string;
+  category: string;
+  textbook_id: string;
+  textbook_title: string;
+  chapter_id: string;
+  chapter: string;
+  page: number;
+  source_text: string;
+  frequency: number;
+  occurrences: KnowledgeOccurrence[];
+};
+
+type KnowledgeEdge = {
+  id: string;
+  source: string;
+  target: string;
+  relation_type: GraphRelationType;
+  label: string;
+  weight: number;
+  textbook_id: string;
+  textbook_title: string;
+  chapter: string;
+  page: number;
+  source_text: string;
+};
+
+type GraphResponse = {
+  graph_id: string;
+  textbook_ids: string[];
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+  stats: {
+    textbook_count: number;
+    node_count: number;
+    edge_count: number;
+    relation_types: GraphRelationType[];
+  };
+  build_mode: "auto" | "llm" | "mock";
+  generated_at: string;
+};
+
 type TabKey = "integration" | "rag" | "chat" | "report";
 
 const API_BASE_URL = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "/api");
+const textbookPalette = ["#0f766e", "#2563eb", "#b45309", "#be123c", "#6d28d9", "#15803d", "#0f4c81"];
+const relationPalette: Record<GraphRelationType, string> = {
+  contains: "#64748b",
+  prerequisite: "#0f766e",
+  parallel: "#7c3aed",
+  applies_to: "#b45309",
+};
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof GitMerge }> = [
   { key: "integration", label: "整合", icon: GitMerge },
@@ -66,6 +130,8 @@ function App() {
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [selectedTextbookId, setSelectedTextbookId] = useState<string | null>(null);
   const [selectedTextbook, setSelectedTextbook] = useState<TextbookDetail | null>(null);
+  const [graph, setGraph] = useState<GraphResponse | null>(null);
+  const [selectedNode, setSelectedNode] = useState<KnowledgeNode | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -85,6 +151,19 @@ function App() {
     [textbooks],
   );
 
+  const handleGraphLoaded = useCallback((nextGraph: GraphResponse | null) => {
+    setGraph(nextGraph);
+    setSelectedNode((currentNode) => {
+      if (!nextGraph) {
+        return null;
+      }
+      if (currentNode && nextGraph.nodes.some((node) => node.id === currentNode.id)) {
+        return currentNode;
+      }
+      return nextGraph.nodes[0] ?? null;
+    });
+  }, []);
+
   async function refreshTextbooks() {
     try {
       const response = await fetch(`${API_BASE_URL}/textbooks`);
@@ -103,6 +182,8 @@ function App() {
   async function selectTextbook(textbookId: string) {
     setSelectedTextbookId(textbookId);
     setIsDetailLoading(true);
+    setGraph(null);
+    setSelectedNode(null);
     setError(null);
     try {
       const response = await fetch(`${API_BASE_URL}/textbooks/${textbookId}`);
@@ -245,13 +326,21 @@ function App() {
       <section className="graph-stage">
         <div className="stage-toolbar">
           <div>
-            <span className="eyebrow">Parser</span>
-            <h2>{selectedTextbook ? selectedTextbook.title : "教材解析结果"}</h2>
+            <span className="eyebrow">Knowledge Graph</span>
+            <h2>{selectedTextbook ? selectedTextbook.title : "教材知识图谱"}</h2>
           </div>
-          <div className="mock-badge">Stage 2 Parser</div>
+          <div className="mock-badge">
+            {graph ? `${graph.stats.node_count} 节点 · ${graph.stats.edge_count} 边` : "Stage 3 Graph"}
+          </div>
         </div>
 
-        <ParserStage textbook={selectedTextbook} isLoading={isDetailLoading || isUploading} />
+        <GraphStage
+          textbook={selectedTextbook}
+          isLoading={isDetailLoading || isUploading}
+          selectedNode={selectedNode}
+          onGraphLoaded={handleGraphLoaded}
+          onNodeSelect={setSelectedNode}
+        />
       </section>
 
       <aside className="right-panel">
@@ -272,7 +361,8 @@ function App() {
           })}
         </nav>
 
-        <PanelContent activeTab={activeTab} textbooks={textbooks} />
+        <NodeDetail node={selectedNode} graph={graph} />
+        <PanelContent activeTab={activeTab} textbooks={textbooks} graph={graph} />
       </aside>
     </main>
   );
@@ -319,13 +409,123 @@ function TextbookCard({
   );
 }
 
-function ParserStage({
+function GraphStage({
   textbook,
   isLoading,
+  selectedNode,
+  onGraphLoaded,
+  onNodeSelect,
 }: {
   textbook: TextbookDetail | null;
   isLoading: boolean;
+  selectedNode: KnowledgeNode | null;
+  onGraphLoaded: (graph: GraphResponse | null) => void;
+  onNodeSelect: (node: KnowledgeNode) => void;
 }) {
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<ReturnType<typeof echarts.init> | null>(null);
+  const [graph, setGraph] = useState<GraphResponse | null>(null);
+  const [isGraphLoading, setIsGraphLoading] = useState(false);
+  const [graphError, setGraphError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!chartContainerRef.current) {
+      return;
+    }
+    const chart = echarts.init(chartContainerRef.current);
+    chartRef.current = chart;
+    const handleResize = () => chart.resize();
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      chart.dispose();
+      chartRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!textbook || textbook.status !== "parsed") {
+      setGraph(null);
+      onGraphLoaded(null);
+      return;
+    }
+    let isCancelled = false;
+    void requestGraph(false, () => isCancelled);
+    return () => {
+      isCancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textbook?.textbook_id, textbook?.status]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !graph) {
+      return;
+    }
+    chart.setOption(createGraphOption(graph, selectedNode?.id), true);
+    window.setTimeout(() => chart.resize(), 0);
+  }, [graph, selectedNode?.id]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !graph) {
+      return;
+    }
+    const handleClick = (params: { dataType?: string; data?: unknown }) => {
+      if (params.dataType !== "node") {
+        return;
+      }
+      const data = params.data as { node?: KnowledgeNode };
+      if (data.node) {
+        onNodeSelect(data.node);
+      }
+    };
+    chart.on("click", handleClick);
+    return () => {
+      chart.off("click", handleClick);
+    };
+  }, [graph, onNodeSelect]);
+
+  async function requestGraph(useBuild: boolean, isCancelled: () => boolean = () => false) {
+    if (!textbook) {
+      return;
+    }
+    setIsGraphLoading(true);
+    setGraphError(null);
+    try {
+      const response = await fetch(
+        useBuild ? `${API_BASE_URL}/graph/build` : `${API_BASE_URL}/graph/${textbook.textbook_id}`,
+        useBuild
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ textbook_ids: [textbook.textbook_id], mode: "auto" }),
+            }
+          : undefined,
+      );
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "图谱生成失败"));
+      }
+      const nextGraph: GraphResponse = await response.json();
+      if (isCancelled()) {
+        return;
+      }
+      setGraph(nextGraph);
+      onGraphLoaded(nextGraph);
+    } catch (err) {
+      if (isCancelled()) {
+        return;
+      }
+      setGraph(null);
+      onGraphLoaded(null);
+      setGraphError(err instanceof Error ? err.message : "图谱生成失败");
+    } finally {
+      if (!isCancelled()) {
+        setIsGraphLoading(false);
+      }
+    }
+  }
+
   if (isLoading && !textbook) {
     return (
       <div className="parser-empty">
@@ -341,69 +541,136 @@ function ParserStage({
       <div className="parser-empty">
         <BookOpenText size={34} aria-hidden="true" />
         <strong>等待上传教材</strong>
-        <span>上传 PDF、Markdown 或 TXT 后，这里会展示章节列表。</span>
+        <span>上传 PDF、Markdown 或 TXT 后，这里会生成可追溯的知识图谱。</span>
+      </div>
+    );
+  }
+
+  if (textbook.status === "failed") {
+    return (
+      <div className="parser-empty">
+        <AlertCircle size={34} aria-hidden="true" />
+        <strong>教材解析失败</strong>
+        <span>{textbook.message}</span>
       </div>
     );
   }
 
   return (
-    <div className="parser-result">
-      <section className="detail-summary" aria-label="解析统计">
+    <div className="graph-result">
+      <section className="detail-summary graph-summary" aria-label="图谱统计">
         <div>
-          <span>解析状态</span>
-          <strong>{statusLabel(textbook.status)}</strong>
+          <span>节点</span>
+          <strong>{graph?.stats.node_count ?? "-"}</strong>
         </div>
         <div>
-          <span>总页数</span>
-          <strong>{textbook.total_pages || "-"}</strong>
+          <span>关系</span>
+          <strong>{graph?.stats.edge_count ?? "-"}</strong>
         </div>
         <div>
-          <span>总字数</span>
-          <strong>{textbook.total_chars}</strong>
+          <span>关系类型</span>
+          <strong>{graph ? graph.stats.relation_types.length : "-"}</strong>
         </div>
         <div>
-          <span>章节数</span>
-          <strong>{textbook.chapter_count}</strong>
+          <span>提取模式</span>
+          <strong>{graph?.build_mode ?? "auto"}</strong>
         </div>
       </section>
 
-      {textbook.status === "failed" ? (
-        <div className="error-banner">{textbook.message}</div>
-      ) : (
-        <section className="chapter-list" aria-label="章节列表">
-          {textbook.chapters.length === 0 ? (
-            <div className="empty-list">暂无章节</div>
+      <div className="graph-actions">
+        <div>
+          <GitBranch size={17} aria-hidden="true" />
+          {graph ? (
+            <span>{graph.stats.relation_types.map(relationLabel).join(" / ") || "暂无关系"}</span>
           ) : (
-            textbook.chapters.map((chapter) => (
-              <article className="chapter-card" key={chapter.chapter_id}>
-                <header>
-                  <div>
-                    <span>{chapter.chapter_id}</span>
-                    <h3>{chapter.title}</h3>
-                  </div>
-                  <strong>
-                    {chapter.page_start === chapter.page_end
-                      ? `第 ${chapter.page_start} 页`
-                      : `第 ${chapter.page_start}-${chapter.page_end} 页`}
-                  </strong>
-                </header>
-                <p>{chapter.content ? chapter.content.slice(0, 260) : "未提取到正文"}</p>
-                <footer>{chapter.char_count} 字</footer>
-              </article>
-            ))
+            <span>等待图谱生成</span>
           )}
-        </section>
-      )}
+        </div>
+        <button type="button" onClick={() => void requestGraph(true)} disabled={isGraphLoading}>
+          {isGraphLoading ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <RefreshCw size={16} />}
+          重建图谱
+        </button>
+      </div>
+
+      <div className="graph-canvas-shell">
+        <div ref={chartContainerRef} className="graph-canvas" aria-label="知识图谱" />
+        {isGraphLoading ? (
+          <div className="graph-overlay">
+            <Loader2 className="spin" size={26} aria-hidden="true" />
+            <strong>生成图谱中</strong>
+          </div>
+        ) : null}
+        {graphError ? (
+          <div className="graph-overlay">
+            <AlertCircle size={26} aria-hidden="true" />
+            <strong>{graphError}</strong>
+          </div>
+        ) : null}
+        {!isGraphLoading && graph && graph.nodes.length === 0 ? (
+          <div className="graph-overlay">
+            <BookOpenText size={26} aria-hidden="true" />
+            <strong>未从章节原文中提取到可追溯知识点</strong>
+          </div>
+        ) : null}
+      </div>
     </div>
+  );
+}
+
+function NodeDetail({ node, graph }: { node: KnowledgeNode | null; graph: GraphResponse | null }) {
+  if (!node) {
+    return (
+      <section className="node-detail empty-detail">
+        <MousePointerClick size={22} aria-hidden="true" />
+        <strong>节点详情</strong>
+        <span>{graph ? "点击图谱节点查看定义、页码与原文出处。" : "生成图谱后可查看节点出处。"}</span>
+      </section>
+    );
+  }
+
+  return (
+    <section className="node-detail">
+      <header>
+        <div>
+          <span>{node.category}</span>
+          <h2>{node.name}</h2>
+        </div>
+        <strong>{node.frequency} 次</strong>
+      </header>
+      <dl>
+        <div>
+          <dt>定义</dt>
+          <dd>{node.definition}</dd>
+        </div>
+        <div>
+          <dt>教材</dt>
+          <dd>{node.textbook_title}</dd>
+        </div>
+        <div>
+          <dt>章节</dt>
+          <dd>{node.chapter}</dd>
+        </div>
+        <div>
+          <dt>页码</dt>
+          <dd>第 {node.page} 页</dd>
+        </div>
+        <div>
+          <dt>原文出处</dt>
+          <dd className="source-text">{node.source_text}</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
 function PanelContent({
   activeTab,
   textbooks,
+  graph,
 }: {
   activeTab: TabKey;
   textbooks: TextbookSummary[];
+  graph: GraphResponse | null;
 }) {
   const validBooks = textbooks.filter((item) => item.status !== "failed");
 
@@ -412,8 +679,12 @@ function PanelContent({
       <section className="panel-body">
         <h2>跨教材整合</h2>
         <div className="metric-row">
-          <span>待整合教材</span>
-          <strong>{validBooks.length}</strong>
+          <span>当前图谱节点</span>
+          <strong>{graph?.stats.node_count ?? 0}</strong>
+        </div>
+        <div className="metric-row">
+          <span>关系类型</span>
+          <strong>{graph?.stats.relation_types.length ?? 0}</strong>
         </div>
         <div className="placeholder-block">整合决策列表将在下一阶段接入。</div>
       </section>
@@ -454,6 +725,179 @@ function PanelContent({
       <div className="placeholder-block">报告统计将在系统完成解析后自动汇总。</div>
     </section>
   );
+}
+
+function createGraphOption(graph: GraphResponse, selectedNodeId?: string) {
+  const textbookTitles = Array.from(new Set(graph.nodes.map((node) => node.textbook_title)));
+  const textbookColor = new Map(
+    textbookTitles.map((title, index) => [title, textbookPalette[index % textbookPalette.length]]),
+  );
+  const maxFrequency = Math.max(1, ...graph.nodes.map((node) => node.frequency));
+
+  return {
+    backgroundColor: "#f8fafc",
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      formatter: (params: { dataType?: string; data?: unknown }) => {
+        const data = params.data as { node?: KnowledgeNode; edge?: KnowledgeEdge };
+        if (params.dataType === "node" && data.node) {
+          return [
+            `<strong>${escapeHtml(data.node.name)}</strong>`,
+            escapeHtml(data.node.category),
+            `${escapeHtml(data.node.chapter)} · 第 ${data.node.page} 页`,
+            `出现 ${data.node.frequency} 次`,
+          ].join("<br/>");
+        }
+        if (data.edge) {
+          return [
+            `<strong>${escapeHtml(relationLabel(data.edge.relation_type))}</strong>`,
+            escapeHtml(data.edge.source_text),
+          ].join("<br/>");
+        }
+        return "";
+      },
+    },
+    legend: {
+      top: 12,
+      left: 12,
+      itemWidth: 12,
+      itemHeight: 12,
+      textStyle: { color: "#475467", fontSize: 12 },
+      data: textbookTitles,
+    },
+    series: [
+      {
+        type: "graph",
+        layout: "force",
+        roam: true,
+        draggable: true,
+        categories: textbookTitles.map((title) => ({
+          name: title,
+          itemStyle: { color: textbookColor.get(title) },
+        })),
+        data: graph.nodes.map((node) => {
+          const baseColor = textbookColor.get(node.textbook_title) ?? textbookPalette[0];
+          return {
+            id: node.id,
+            name: node.name,
+            value: node.frequency,
+            category: textbookTitles.indexOf(node.textbook_title),
+            symbolSize: 32 + Math.min(28, (node.frequency / maxFrequency) * 28),
+            itemStyle: {
+              color: colorByFrequency(baseColor, node.frequency, maxFrequency),
+              borderColor: node.id === selectedNodeId ? "#111827" : "#ffffff",
+              borderWidth: node.id === selectedNodeId ? 4 : 2,
+              shadowColor: "rgba(15, 23, 42, 0.22)",
+              shadowBlur: node.id === selectedNodeId ? 18 : 8,
+            },
+            label: {
+              show: true,
+              color: "#172033",
+              fontSize: 12,
+              width: 108,
+              overflow: "truncate",
+            },
+            node,
+          };
+        }),
+        links: graph.edges.map((edge) => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          value: edge.weight,
+          label: {
+            show: true,
+            formatter: edge.label,
+            color: relationPalette[edge.relation_type],
+            fontSize: 11,
+          },
+          lineStyle: {
+            color: relationPalette[edge.relation_type],
+            width: 1.7,
+            opacity: 0.62,
+            curveness: edge.relation_type === "parallel" ? 0.2 : 0.08,
+          },
+          edge,
+        })),
+        edgeSymbol: ["none", "arrow"],
+        edgeSymbolSize: [0, 8],
+        force: {
+          repulsion: 260,
+          edgeLength: [86, 170],
+          gravity: 0.08,
+        },
+        emphasis: {
+          focus: "adjacency",
+          lineStyle: { width: 3, opacity: 0.9 },
+        },
+      },
+    ],
+  };
+}
+
+function relationLabel(relation: GraphRelationType) {
+  if (relation === "prerequisite") {
+    return "先修";
+  }
+  if (relation === "parallel") {
+    return "并列";
+  }
+  if (relation === "contains") {
+    return "包含";
+  }
+  return "应用于";
+}
+
+function colorByFrequency(baseColor: string, frequency: number, maxFrequency: number) {
+  const ratio = Math.min(0.34, (frequency / Math.max(maxFrequency, 1)) * 0.34);
+  return blendHex(baseColor, "#172033", ratio);
+}
+
+function blendHex(from: string, to: string, ratio: number) {
+  const start = hexToRgb(from);
+  const end = hexToRgb(to);
+  if (!start || !end) {
+    return from;
+  }
+  const mixed = start.map((value, index) =>
+    Math.round(value + (end[index] - value) * ratio)
+      .toString(16)
+      .padStart(2, "0"),
+  );
+  return `#${mixed.join("")}`;
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6) {
+    return null;
+  }
+  return [0, 2, 4].map((index) => Number.parseInt(normalized.slice(index, index + 2), 16));
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function readApiError(response: Response, fallback: string) {
+  try {
+    const payload = await response.json();
+    if (typeof payload.detail === "string") {
+      return payload.detail;
+    }
+    if (typeof payload.message === "string") {
+      return payload.message;
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
 }
 
 function statusLabel(status: TextbookStatus) {

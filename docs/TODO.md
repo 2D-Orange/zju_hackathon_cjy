@@ -21,11 +21,11 @@
 
 ## 阶段 3：知识图谱
 
-- [ ] 定义知识节点和边的 Pydantic schema。
-- [ ] 按章节调用 LLM 或 mock fallback 提取知识点。
-- [ ] 关系类型至少覆盖 `prerequisite`、`parallel`、`contains`、`applies_to` 中三种。
-- [ ] 接入 Cytoscape.js 或 ECharts Graph 渲染图谱。
-- [ ] 支持节点点击查看定义、章节、页码、原文出处。
+- [x] 定义知识节点和边的 Pydantic schema。
+- [x] 按章节调用 LLM 或 mock fallback 提取知识点。
+- [x] 关系类型至少覆盖 `prerequisite`、`parallel`、`contains`、`applies_to` 中三种。
+- [x] 接入 Cytoscape.js 或 ECharts Graph 渲染图谱。
+- [x] 支持节点点击查看定义、章节、页码、原文出处。
 
 ## 阶段 4：跨教材整合
 
