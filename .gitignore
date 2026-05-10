@@ -1,0 +1,25 @@
+# 教材数据与赛题 PDF（不要上传到 GitHub）
+*.pdf
+textbooks/
+data/textbooks/
+data/uploads/
+data/processed/
+data/vector_store/
+
+# Local environment
+.env
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+
+# Frontend/build artifacts
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
