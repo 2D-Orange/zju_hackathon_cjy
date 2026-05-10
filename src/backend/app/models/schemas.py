@@ -251,6 +251,27 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class ReportSummary(BaseModel):
+    textbook_count: int
+    parsed_textbook_count: int
+    total_chapters: int
+    total_chars: int
+    graph_node_count: int = 0
+    graph_edge_count: int = 0
+    graph_textbook_count: int = 0
+    integration_decision_count: int = 0
+    integration_merge_count: int = 0
+    integration_keep_count: int = 0
+    integration_remove_count: int = 0
+    compression_ratio: float = 0
+    original_chars: int = 0
+    compressed_chars: int = 0
+    rag_indexed: bool = False
+    rag_chunk_count: int = 0
+    rag_embedding_mode: str = ""
+    chat_session_count: int = 0
+
+
 class ErrorResponse(BaseModel):
     error_code: str
     message: str

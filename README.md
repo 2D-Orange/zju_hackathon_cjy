@@ -1,6 +1,6 @@
 # 学科知识整合智能体
 
-面向 AI 全栈极速黑客松的医学教材整合 Web 应用。当前第一阶段已跑通前后端骨架、教材上传 mock 流程和三栏单页界面。
+面向 AI 全栈极速黑客松的医学教材整合 Web 应用。已跑通上传解析、知识图谱、跨教材整合、RAG 问答、教师反馈和报告的完整闭环。
 
 ## 环境依赖
 
@@ -32,6 +32,7 @@ HOST=0.0.0.0 PORT=8000 .venv/bin/python src/backend/run.py
 - `POST /api/rag/query`
 - `GET /api/rag/status`
 - `POST /api/chat`
+- `GET /api/report/summary`
 
 前端：
 
@@ -49,6 +50,33 @@ npm run dev
 .venv/bin/uvicorn app.main:app --reload --app-dir src/backend --host 0.0.0.0 --port 8000
 ```
 
+## Docker 启动（推荐）
+
+```bash
+docker compose up -d
+```
+
+后端监听 `http://localhost:8000`，前端 `http://localhost:5173`。Docker 模式下前端 `/api` 通过 Vite proxy 转发到后端容器。
+
+## 演示流程
+
+```text
+1. 打开 http://localhost:5173，看到三栏界面（左：教材管理 / 中：图谱 / 右：功能面板）
+2. 上传 ≥2 本医学教材（PDF/MD/TXT），等待解析完成（列表出现绿色勾）
+3. 点击教材 → 中间图谱自动渲染节点和关系
+4. 切换到"整合"Tab → 点击"运行整合" → 查看决策列表和压缩比
+5. 切换到"RAG"Tab → 点击"建立索引" → 输入问题 → 查看带引用的回答
+6. 切换到"对话"Tab → 选择决策 → 发送反馈（如"把这个合并改为保留"） → 查看更新
+7. 切换到"报告"Tab → 查看系统汇总统计
+```
+
+## 已知限制
+
+- 教材列表、图谱缓存和 RAG 索引存储在进程内存中，服务重启后需重新上传/构建/索引
+- 整合决策和对话会话通过 `data/processed/*.json` 持久化，重启后可恢复
+- 本地 embedding 使用 hash 算法，语义精度低于真实 embedding 模型
+- 教师反馈的意图解析为规则匹配，仅能识别明确的修改关键词
+
 ## 配置
 
 复制 `.env.example` 为 `.env` 后按需修改。
@@ -62,10 +90,15 @@ npm run dev
 - RAG 默认使用内存向量索引和本地轻量 embedding fallback，chunk 为 700 字、80 字重叠。可选在线 embedding 通过 `RAG_EMBEDDING_BASE_URL`、`RAG_EMBEDDING_API_KEY`、`RAG_EMBEDDING_MODEL` 配置；可选 OpenAI 兼容问答模型通过 `RAG_LLM_BASE_URL`、`RAG_LLM_API_KEY`、`RAG_LLM_MODEL` 配置。未配置 LLM 时返回基于检索 chunk 的摘录式答案，不使用模型医学常识补全。
 - 教师反馈默认使用规则解析 fallback，可解释整合决策 reason、definition、source_text 和教材出处，也可将决策自然语言调整为合并、保留或移除。整合决策与对话会话写入 `data/processed/` 下的本地 JSON store，该目录不会提交到 GitHub。
 
-## 开发文档
+## 文档
 
-- [任务清单](docs/TODO.md)
-- [开发路线图](docs/开发路线图.md)
+- [README](README.md) — 项目说明与启动指南
+- [需求分析](docs/需求分析.md) — 赛题目标、用户角色、P0/P1 功能、验收标准
+- [系统设计](docs/系统设计.md) — 架构、数据流、API、存储、容错
+- [Agent 架构说明](docs/Agent 架构说明.md) — 模块职责、Mermaid 图、取舍、局限、创新点
+- [整合报告](report/整合报告.md) — 系统真实统计数据
+- [开发路线图](docs/开发路线图.md) — 分阶段计划
+- [任务清单](docs/TODO.md) — 进度跟踪
 
 ## 公网部署建议
 
@@ -80,7 +113,7 @@ npm run dev
 - 魔搭创空间：适合比赛提交，建议用一个后端服务启动 FastAPI，并用平台静态资源或 Nginx/前端构建产物代理 `/api`。
 - Render / Railway / Zeabur：适合部署 FastAPI 后端，启动命令为 `python src/backend/run.py`，平台注入 `PORT`。
 - Vercel / Netlify：适合部署前端，但需要配置 rewrite，将 `/api/*` 转发到后端公网地址，保持前端代码继续使用相对 `/api`。
-- Docker / docker-compose：后续可作为一键复现方案，用 Nginx 同源代理前端和 `/api`，减少跨域问题。
+- Docker：仓库已提供 `docker-compose.yml`，一键启动前后端。
 
 部署验收时至少检查：
 

@@ -204,6 +204,27 @@ type TeacherFeedbackResponse = {
   updated_decision: IntegrationDecision | null;
 };
 
+type ReportSummary = {
+  textbook_count: number;
+  parsed_textbook_count: number;
+  total_chapters: number;
+  total_chars: number;
+  graph_node_count: number;
+  graph_edge_count: number;
+  graph_textbook_count: number;
+  integration_decision_count: number;
+  integration_merge_count: number;
+  integration_keep_count: number;
+  integration_remove_count: number;
+  compression_ratio: number;
+  original_chars: number;
+  compressed_chars: number;
+  rag_indexed: boolean;
+  rag_chunk_count: number;
+  rag_embedding_mode: string;
+  chat_session_count: number;
+};
+
 type TabKey = "integration" | "rag" | "chat" | "report";
 
 const API_BASE_URL = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "/api");
@@ -1072,16 +1093,7 @@ function PanelContent({
     );
   }
 
-  return (
-    <section className="panel-body">
-      <h2>整合报告</h2>
-      <div className="metric-row">
-        <span>已上传教材</span>
-        <strong>{validBooks.length}</strong>
-      </div>
-      <div className="placeholder-block">报告统计将在系统完成解析后自动汇总。</div>
-    </section>
-  );
+  return <ReportPanel textbooks={textbooks} />;
 }
 
 function TeacherChatPanel({
@@ -1398,6 +1410,180 @@ function IntegrationPanel({
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+function ReportPanel({ textbooks }: { textbooks: TextbookSummary[] }) {
+  const [report, setReport] = useState<ReportSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(`${API_BASE_URL}/report/summary`)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readApiError(res, "报告获取失败"));
+        }
+        return res.json() as Promise<ReportSummary>;
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setReport(data);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "报告获取失败");
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [textbooks]);
+
+  if (loading) {
+    return (
+      <section className="panel-body report-panel">
+        <h2>整合报告</h2>
+        <div className="placeholder-block">
+          <Loader2 className="spin" size={24} aria-hidden="true" />
+          正在汇总系统统计...
+        </div>
+      </section>
+    );
+  }
+
+  if (error || !report) {
+    return (
+      <section className="panel-body report-panel">
+        <h2>整合报告</h2>
+        <div className="placeholder-block">{error || "暂无可用的报告数据"}</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel-body report-panel">
+      <h2>整合报告</h2>
+
+      <div className="report-section">
+        <h3>教材概览</h3>
+        <div className="metric-grid">
+          <div className="metric-card">
+            <strong>{report.textbook_count}</strong>
+            <span>上传教材</span>
+          </div>
+          <div className="metric-card">
+            <strong>{report.parsed_textbook_count}</strong>
+            <span>已解析</span>
+          </div>
+          <div className="metric-card">
+            <strong>{report.total_chapters}</strong>
+            <span>章节总数</span>
+          </div>
+          <div className="metric-card">
+            <strong>{formatSize(report.total_chars * 3)}</strong>
+            <span>总字符数</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="report-section">
+        <h3>知识图谱</h3>
+        <div className="metric-grid">
+          <div className="metric-card">
+            <strong>{report.graph_node_count}</strong>
+            <span>知识节点</span>
+          </div>
+          <div className="metric-card">
+            <strong>{report.graph_edge_count}</strong>
+            <span>关系边</span>
+          </div>
+          <div className="metric-card">
+            <strong>{report.graph_textbook_count}</strong>
+            <span>覆盖教材</span>
+          </div>
+          <div className="metric-card">
+            <strong>{report.graph_textbook_count > 0 ? Math.round(report.graph_node_count / Math.max(1, report.graph_textbook_count)) : 0}</strong>
+            <span>平均每本节点</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="report-section">
+        <h3>跨教材整合</h3>
+        <div className="metric-grid">
+          <div className="metric-card">
+            <strong>{report.integration_decision_count}</strong>
+            <span>整合决策</span>
+          </div>
+          <div className="metric-card action-merge">
+            <strong>{report.integration_merge_count}</strong>
+            <span>合并</span>
+          </div>
+          <div className="metric-card action-keep">
+            <strong>{report.integration_keep_count}</strong>
+            <span>保留</span>
+          </div>
+          <div className="metric-card action-remove">
+            <strong>{report.integration_remove_count}</strong>
+            <span>移除</span>
+          </div>
+        </div>
+        {report.integration_decision_count > 0 ? (
+          <div className="compression-bar" style={{ marginTop: 12 }}>
+            <div className="compression-label">
+              <span>压缩比</span>
+              <strong>{formatPercent(report.compression_ratio)}</strong>
+            </div>
+            <div className="compression-track">
+              <div
+                className="compression-fill"
+                style={{ width: `${Math.min(100, Math.round(report.compression_ratio * 100))}%` }}
+              />
+            </div>
+            <div className="compression-hint" style={{ marginTop: 6 }}>
+              {report.original_chars > 0 && report.compressed_chars > 0
+                ? `原始 ${Math.round(report.original_chars)} 字 → 整合 ${Math.round(report.compressed_chars)} 字`
+                : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="report-section">
+        <h3>RAG 问答状态</h3>
+        <div className="metric-grid">
+          <div className="metric-card">
+            <strong>{report.rag_indexed ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}</strong>
+            <span>{report.rag_indexed ? "已索引" : "未索引"}</span>
+          </div>
+          <div className="metric-card">
+            <strong>{report.rag_chunk_count}</strong>
+            <span>检索分块</span>
+          </div>
+          <div className="metric-card">
+            <strong>{report.rag_embedding_mode || "—"}</strong>
+            <span>嵌入模式</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="report-section">
+        <h3>教师反馈</h3>
+        <div className="metric-grid">
+          <div className="metric-card">
+            <strong>{report.chat_session_count}</strong>
+            <span>对话会话</span>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }

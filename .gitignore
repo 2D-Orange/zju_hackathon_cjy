@@ -18,6 +18,7 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+src/frontend/data/
 
 # OS/editor files
 .DS_Store
